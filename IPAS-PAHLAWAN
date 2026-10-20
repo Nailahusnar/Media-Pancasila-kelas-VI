@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LKPD IPAS Kelas VI - Misi Detektif Pahlawan</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
+    
+    <!-- html2pdf.js library for high-quality PDF rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase Configuration setup
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'lkpd-pahlawan-app';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "demo-api-key",
+            authDomain: "demo-app.firebaseapp.com",
+            projectId: "demo-app",
+            storageBucket: "demo-app.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "1:123456789:web:abcdef"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        window.db = db;
+        window.appId = appId;
+
+        // Authenticate user
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.warn("Auth initial error, retrying anonymous auth:", err);
+                await signInAnonymously(auth);
+            }
+        }
+
+        initAuth();
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                window.currentUser = user;
+                listenToSubmissions();
+            }
+        });
+
+        // Function to submit LKPD data to Firestore
+        window.saveSubmissionToCloud = async function(data) {
+            if (!auth.currentUser) {
+                await initAuth();
+            }
+            const publicCollectionPath = collection(db, 'artifacts', appId, 'public', 'data', 'lkpd_submissions');
+            await addDoc(publicCollectionPath, {
+                ...data,
+                submittedAt: serverTimestamp(),
+                userId: auth.currentUser ? auth.currentUser.uid : 'anon'
+            });
+        };
+
+        // Function to update teacher grading in Firestore
+        window.updateTeacherGradeInCloud = async function(docId, gradeData) {
+            if (!auth.currentUser) await initAuth();
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'lkpd_submissions', docId);
+            await updateDoc(docRef, {
+                teacherScores: gradeData.scores,
+                totalScore: gradeData.totalScore,
+                teacherNotes: gradeData.notes,
+                gradedAt: serverTimestamp()
+            });
+        };
+
+        // Realtime listener for teacher dashboard
+        function listenToSubmissions() {
+            if (!auth.currentUser) return;
+            const publicCollectionPath = collection(db, 'artifacts', appId, 'public', 'data', 'lkpd_submissions');
+            
+            onSnapshot(publicCollectionPath, (snapshot) => {
+                const submissions = [];
+                snapshot.forEach((doc) => {
+                    submissions.push({ id: doc.id, ...doc.data() });
+                });
+                
+                // Sort by submittedAt descending in JavaScript
+                submissions.sort((a, b) => {
+                    const timeA = a.submittedAt?.seconds || 0;
+                    const timeB = b.submittedAt?.seconds || 0;
+                    return timeB - timeA;
+                });
+
+                if (window.renderTeacherDashboard) {
+                    window.renderTeacherDashboard(submissions);
+                }
+            }, (error) => {
+                console.error("Error listening to submissions:", error);
+            });
+        }
+    </script>
+
+    <style>
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #f5eedc;
+            background-image: radial-gradient(#d2b48c 0.75px, transparent 0.75px), radial-gradient(#d2b48c 0.75px, #f5eedc 0.75px);
+            background-size: 30px 30px;
+            background-position: 0 0, 15px 15px;
+        }
+        .font-header {
+            font-family: 'Fredoka', cursive;
+        }
+        .hero-card {
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .hero-card.selected {
+            border-color: #2563eb !important;
+            background-color: #eff6ff !important;
+            box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.25);
+            transform: translateY(-4px);
+        }
+        .paper-texture {
+            background-color: #fdfbf7;
+            box-shadow: 0 10px 30px -5px rgba(0,0,0,0.08), 0 0 2px rgba(0,0,0,0.05);
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="min-h-screen py-4 px-2 sm:px-4 md:py-8">
+
+    <div class="max-w-4xl mx-auto space-y-6" id="mainContainer">
+
+        <!-- Top Navigation Bar for Teacher Access -->
+        <div class="flex justify-between items-center px-2">
+            <span class="text-xs font-semibold text-amber-900/70 bg-amber-200/50 px-3 py-1 rounded-full border border-amber-300/50">
+                <i class="fa-solid fa-graduation-cap mr-1"></i> Mode Siswa
+            </span>
+            <button onclick="openTeacherLogin()" class="bg-amber-900 text-amber-50 hover:bg-amber-950 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold shadow-md transition-all flex items-center gap-2">
+                <i class="fa-solid fa-user-shield"></i> Portal Guru / Dashboard
+            </button>
+        </div>
+
+        <!-- Banner Title Card -->
+        <div class="paper-texture rounded-3xl p-5 sm:p-8 border-4 border-amber-900/20 relative overflow-hidden">
+            <div class="absolute -top-3 -left-3 bg-amber-700 text-amber-50 px-6 py-2 rounded-br-2xl font-bold shadow-md transform -rotate-3 text-sm sm:text-base border-2 border-amber-900/30">
+                LKPD IPAS Kelas VI • Bab 3
+            </div>
+
+            <div class="mt-6 sm:mt-2 text-center space-y-2">
+                <div class="inline-flex items-center gap-2 bg-amber-100 text-amber-900 px-4 py-1 rounded-full text-xs sm:text-sm font-semibold border border-amber-200">
+                    <i class="fa-solid fa-magnifying-glass"></i> Lembar Kerja Peserta Didik Digital
+                </div>
+                <h1 class="font-header text-3xl sm:text-5xl font-extrabold text-amber-950 tracking-wide drop-shadow-sm">
+                    Misi Detektif Pahlawan
+                </h1>
+                <p class="text-amber-800 font-medium text-sm sm:text-lg">
+                    Para Pahlawan Daerahku dan Pahlawan Nasional
+                </p>
+            </div>
+
+            <!-- Identity Section -->
+            <div id="lkpdPrintArea" class="space-y-6">
+                <div class="mt-6 pt-6 border-t-2 border-dashed border-amber-200 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="bg-amber-50/80 p-3 rounded-2xl border border-amber-200/60">
+                        <label class="block text-xs font-bold text-amber-900 uppercase tracking-wider mb-1">Nama Siswa <span class="text-red-500">*</span></label>
+                        <input type="text" id="inputNama" placeholder="Ketik nama lengkap..." class="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none transition-all">
+                    </div>
+                    <div class="bg-amber-50/80 p-3 rounded-2xl border border-amber-200/60">
+                        <label class="block text-xs font-bold text-amber-900 uppercase tracking-wider mb-1">Kelas <span class="text-red-500">*</span></label>
+                        <input type="text" id="inputKelas" placeholder="Contoh: VI A" class="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none transition-all">
+                    </div>
+                    <div class="bg-amber-50/80 p-3 rounded-2xl border border-amber-200/60">
+                        <label class="block text-xs font-bold text-amber-900 uppercase tracking-wider mb-1">Tanggal</label>
+                        <input type="date" id="inputTanggal" class="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none transition-all">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- BAGIAN A: PILIH PAHLAWAN -->
+        <div class="paper-texture rounded-3xl p-5 sm:p-8 border-2 border-amber-900/10">
+            <div class="flex items-center gap-3 mb-3">
+                <span class="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-amber-800 text-white flex items-center justify-center font-header font-bold text-xl shadow-md">A</span>
+                <div>
+                    <h2 class="font-header text-xl sm:text-2xl text-amber-950">Pilih Pahlawan</h2>
+                    <p class="text-xs sm:text-sm text-slate-600">Pilih salah satu pahlawan berikut untuk diselidiki dengan mengetuk kartu pilihanmu.</p>
+                </div>
+            </div>
+
+            <!-- Grid Cards Pahlawan dengan Gambar Potret -->
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-5 mt-4">
+                
+                <!-- Pahlawan 1: Pangeran Antasari -->
+                <div onclick="selectHero('Pangeran Antasari', 'Kalimantan Selatan')" id="hero-0" class="hero-card cursor-pointer rounded-2xl p-3 sm:p-4 border-2 border-slate-200 bg-white hover:border-amber-400 relative text-center group flex flex-col justify-between">
+                    <div class="absolute top-3 left-3 w-6 h-6 rounded-lg border-2 border-slate-300 group-hover:border-amber-500 flex items-center justify-center bg-white check-icon z-10">
+                        <i class="fa-solid fa-check text-xs text-blue-600 hidden"></i>
+                    </div>
+                    <div class="w-24 h-24 sm:w-32 sm:h-32 mx-auto my-2 rounded-full overflow-hidden bg-amber-100 border-4 border-amber-200 shadow-md relative group-hover:scale-105 transition-transform">
+                        <!-- Gambar Ilustrasi Pangeran Antasari -->
+                        <svg viewBox="0 0 200 200" class="w-full h-full object-cover">
+                            <rect width="200" height="200" fill="#fde68a"/>
+                            <path d="M100 20 C60 20 50 60 50 80 C50 110 60 130 70 145 C80 160 85 180 85 200 L115 200 C115 180 120 160 130 145 C140 130 150 110 150 80 C150 60 140 20 100 20 Z" fill="#f59e0b"/>
+                            <!-- Sorban Kuning Emas -->
+                            <path d="M55 65 C55 35 75 25 100 25 C125 25 145 35 145 65 C135 50 115 45 100 45 C85 45 65 50 55 65 Z" fill="#d97706"/>
+                            <path d="M50 70 Q100 50 150 70 Q100 80 50 70 Z" fill="#b45309"/>
+                            <!-- Wajah & Kumis -->
+                            <circle cx="100" cy="90" r="35" fill="#fbcfe8"/>
+                            <path d="M85 98 Q100 110 115 98 Q100 102 85 98 Z" fill="#451a03"/> <!-- Kumis khas -->
+                            <circle cx="88" cy="85" r="4" fill="#451a03"/>
+                            <circle cx="112" cy="85" r="4" fill="#451a03"/>
+                            <!-- Baju Kebesaran Banjar -->
+                            <path d="M40 200 L160 200 L145 135 Q100 150 55 135 Z" fill="#78350f"/>
+                            <path d="M85 140 L100 190 L115 140 Z" fill="#f59e0b"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm sm:text-base text-slate-800 line-clamp-1">Pangeran Antasari</h3>
+                        <span class="inline-block px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] sm:text-xs rounded-md font-medium mt-1">Kalimantan Selatan</span>
+                    </div>
+                </div>
+
+                <!-- Pahlawan 2: Ki Hadjar Dewantara -->
+                <div onclick="selectHero('Ki Hadjar Dewantara', 'Yogyakarta')" id="hero-1" class="hero-card cursor-pointer rounded-2xl p-3 sm:p-4 border-2 border-slate-200 bg-white hover:border-amber-400 relative text-center group flex flex-col justify-between">
+                    <div class="absolute top-3 left-3 w-6 h-6 rounded-lg border-2 border-slate-300 group-hover:border-amber-500 flex items-center justify-center bg-white check-icon z-10">
+                        <i class="fa-solid fa-check text-xs text-blue-600 hidden"></i>
+                    </div>
+                    <div class="w-24 h-24 sm:w-32 sm:h-32 mx-auto my-2 rounded-full overflow-hidden bg-emerald-100 border-4 border-emerald-200 shadow-md relative group-hover:scale-105 transition-transform">
+                        <!-- Gambar Ilustrasi Ki Hadjar Dewantara -->
+                        <svg viewBox="0 0 200 200" class="w-full h-full object-cover">
+                            <rect width="200" height="200" fill="#a7f3d0"/>
+                            <!-- Blangkon Jawa -->
+                            <path d="M50 85 C50 45 75 30 100 30 C125 30 150 45 150 85 C140 70 120 65 100 65 C80 65 60 70 50 85 Z" fill="#78350f"/>
+                            <path d="M50 80 Q100 65 150 80 Q100 90 50 80 Z" fill="#451a03"/>
+                            <!-- Wajah & Kacamata -->
+                            <circle cx="100" cy="95" r="33" fill="#fde68a"/>
+                            <circle cx="86" cy="92" r="9" fill="none" stroke="#1e293b" stroke-width="3"/> <!-- Kacamata kiri -->
+                            <circle cx="114" cy="92" r="9" fill="none" stroke="#1e293b" stroke-width="3"/> <!-- Kacamata kanan -->
+                            <line x1="95" y1="92" x2="105" y2="92" stroke="#1e293b" stroke-width="3"/>
+                            <path d="M92 112 Q100 118 108 112" fill="none" stroke="#78350f" stroke-width="3"/> <!-- Senyum ramah -->
+                            <!-- Jas Pendidikan -->
+                            <path d="M35 200 L165 200 L150 140 Q100 155 50 140 Z" fill="#064e3b"/>
+                            <path d="M85 140 L100 170 L115 140 Z" fill="#ffffff"/>
+                            <path d="M96 150 L104 150 L102 190 L98 190 Z" fill="#0f766e"/> <!-- Dasi -->
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm sm:text-base text-slate-800 line-clamp-1">Ki Hadjar Dewantara</h3>
+                        <span class="inline-block px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] sm:text-xs rounded-md font-medium mt-1">Yogyakarta</span>
+                    </div>
+                </div>
+
+                <!-- Pahlawan 3: I Gusti Ngurah Rai -->
+                <div onclick="selectHero('I Gusti Ngurah Rai', 'Bali')" id="hero-2" class="hero-card cursor-pointer rounded-2xl p-3 sm:p-4 border-2 border-slate-200 bg-white hover:border-amber-400 relative text-center group flex flex-col justify-between">
+                    <div class="absolute top-3 left-3 w-6 h-6 rounded-lg border-2 border-slate-300 group-hover:border-amber-500 flex items-center justify-center bg-white check-icon z-10">
+                        <i class="fa-solid fa-check text-xs text-blue-600 hidden"></i>
+                    </div>
+                    <div class="w-24 h-24 sm:w-32 sm:h-32 mx-auto my-2 rounded-full overflow-hidden bg-rose-100 border-4 border-rose-200 shadow-md relative group-hover:scale-105 transition-transform">
+                        <!-- Gambar Ilustrasi I Gusti Ngurah Rai -->
+                        <svg viewBox="0 0 200 200" class="w-full h-full object-cover">
+                            <rect width="200" height="200" fill="#fecdd3"/>
+                            <!-- Udeng Bali khas -->
+                            <path d="M45 80 C45 45 75 35 100 35 C125 35 155 45 155 80 Q100 60 45 80 Z" fill="#9f1239"/>
+                            <path d="M90 35 L100 15 L110 35 Z" fill="#be123c"/> <!-- Ikatan Udeng ke atas -->
+                            <path d="M45 75 Q100 62 155 75 Q100 85 45 75 Z" fill="#fda4af"/>
+                            <!-- Wajah Pejuang -->
+                            <circle cx="100" cy="95" r="34" fill="#fde68a"/>
+                            <circle cx="86" cy="90" r="3.5" fill="#451a03"/>
+                            <circle cx="114" cy="90" r="3.5" fill="#451a03"/>
+                            <path d="M88 102 Q100 108 112 102" stroke="#78350f" stroke-width="2.5" fill="none"/>
+                            <!-- Seragam Militer / Safari -->
+                            <path d="M35 200 L165 200 L150 140 Q100 155 50 140 Z" fill="#881337"/>
+                            <!-- Lencana Pangkat -->
+                            <rect x="70" y="145" width="12" height="18" rx="2" fill="#fbbf24"/>
+                            <rect x="118" y="145" width="12" height="18" rx="2" fill="#fbbf24"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm sm:text-base text-slate-800 line-clamp-1">I Gusti Ngurah Rai</h3>
+                        <span class="inline-block px-2 py-0.5 bg-rose-100 text-rose-800 text-[10px] sm:text-xs rounded-md font-medium mt-1">Bali</span>
+                    </div>
+                </div>
+
+                <!-- Pahlawan 4: M. Zainuddin Abdul Madjid -->
+                <div onclick="selectHero('Muhammad Zainuddin Abdul Madjid', 'Nusa Tenggara Barat')" id="hero-3" class="hero-card cursor-pointer rounded-2xl p-3 sm:p-4 border-2 border-slate-200 bg-white hover:border-amber-400 relative text-center group flex flex-col justify-between">
+                    <div class="absolute top-3 left-3 w-6 h-6 rounded-lg border-2 border-slate-300 group-hover:border-amber-500 flex items-center justify-center bg-white check-icon z-10">
+                        <i class="fa-solid fa-check text-xs text-blue-600 hidden"></i>
+                    </div>
+                    <div class="w-24 h-24 sm:w-32 sm:h-32 mx-auto my-2 rounded-full overflow-hidden bg-purple-100 border-4 border-purple-200 shadow-md relative group-hover:scale-105 transition-transform">
+                        <!-- Gambar Ilustrasi Tuan Guru Bajang M. Zainuddin Abdul Madjid -->
+                        <svg viewBox="0 0 200 200" class="w-full h-full object-cover">
+                            <rect width="200" height="200" fill="#e9d5ff"/>
+                            <!-- Kopiah / Peci Putih Khas Ulama -->
+                            <path d="M60 75 C60 40 80 30 100 30 C120 30 140 40 140 75 Z" fill="#ffffff"/>
+                            <rect x="60" y="68" width="80" height="12" fill="#f3e8ff"/>
+                            <!-- Wajah Teguh -->
+                            <circle cx="100" cy="95" r="33" fill="#fde68a"/>
+                            <circle cx="87" cy="90" r="3.5" fill="#3b0764"/>
+                            <circle cx="113" cy="90" r="3.5" fill="#3b0764"/>
+                            <path d="M90 108 Q100 114 110 108" stroke="#581c87" stroke-width="2.5" fill="none"/>
+                            <!-- Jubah / Jas Dakwah -->
+                            <path d="M35 200 L165 200 L150 138 Q100 152 50 138 Z" fill="#581c87"/>
+                            <path d="M85 138 L100 185 L115 138 Z" fill="#ffffff"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-xs sm:text-sm text-slate-800 line-clamp-2">M. Zainuddin Abdul Madjid</h3>
+                        <span class="inline-block px-2 py-0.5 bg-purple-100 text-purple-800 text-[10px] sm:text-xs rounded-md font-medium mt-1">Nusa Tenggara Barat</span>
+                    </div>
+                </div>
+
+                <!-- Pahlawan 5: Sam Ratulangi -->
+                <div onclick="selectHero('Sam Ratulangi', 'Sulawesi Utara')" id="hero-4" class="hero-card cursor-pointer rounded-2xl p-3 sm:p-4 border-2 border-slate-200 bg-white hover:border-amber-400 relative text-center group flex flex-col justify-between">
+                    <div class="absolute top-3 left-3 w-6 h-6 rounded-lg border-2 border-slate-300 group-hover:border-amber-500 flex items-center justify-center bg-white check-icon z-10">
+                        <i class="fa-solid fa-check text-xs text-blue-600 hidden"></i>
+                    </div>
+                    <div class="w-24 h-24 sm:w-32 sm:h-32 mx-auto my-2 rounded-full overflow-hidden bg-sky-100 border-4 border-sky-200 shadow-md relative group-hover:scale-105 transition-transform">
+                        <!-- Gambar Ilustrasi Sam Ratulangi -->
+                        <svg viewBox="0 0 200 200" class="w-full h-full object-cover">
+                            <rect width="200" height="200" fill="#bae6fd"/>
+                            <!-- Rambut Klimis Tokoh Cendekiawan -->
+                            <path d="M55 75 C55 35 80 25 100 25 C120 25 145 35 145 75 C135 55 120 50 100 50 C80 50 65 55 55 75 Z" fill="#0f172a"/>
+                            <!-- Wajah & Kacamata Cendekiawan -->
+                            <circle cx="100" cy="95" r="33" fill="#fde68a"/>
+                            <circle cx="86" cy="90" r="8" fill="none" stroke="#0f172a" stroke-width="2.5"/>
+                            <circle cx="114" cy="90" r="8" fill="none" stroke="#0f172a" stroke-width="2.5"/>
+                            <line x1="94" y1="90" x2="106" y2="90" stroke="#0f172a" stroke-width="2"/>
+                            <path d="M88 100 Q100 110 112 100 Z" fill="#0f172a"/> <!-- Kumis khas -->
+                            <!-- Jas Resmi / Pakaian Nasional -->
+                            <path d="M35 200 L165 200 L150 140 Q100 155 50 140 Z" fill="#0369a1"/>
+                            <path d="M85 140 L100 175 L115 140 Z" fill="#ffffff"/>
+                            <polygon points="97,145 103,145 102,185 98,185" fill="#0284c7"/> <!-- Dasi -->
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm sm:text-base text-slate-800 line-clamp-1">Sam Ratulangi</h3>
+                        <span class="inline-block px-2 py-0.5 bg-sky-100 text-sky-800 text-[10px] sm:text-xs rounded-md font-medium mt-1">Sulawesi Utara</span>
+                    </div>
+                </div>
+
+                <!-- Pahlawan 6: Abdoel Moeis -->
+                <div onclick="selectHero('Abdoel Moeis', 'Sumatra Barat')" id="hero-5" class="hero-card cursor-pointer rounded-2xl p-3 sm:p-4 border-2 border-slate-200 bg-white hover:border-amber-400 relative text-center group flex flex-col justify-between">
+                    <div class="absolute top-3 left-3 w-6 h-6 rounded-lg border-2 border-slate-300 group-hover:border-amber-500 flex items-center justify-center bg-white check-icon z-10">
+                        <i class="fa-solid fa-check text-xs text-blue-600 hidden"></i>
+                    </div>
+                    <div class="w-24 h-24 sm:w-32 sm:h-32 mx-auto my-2 rounded-full overflow-hidden bg-amber-100 border-4 border-amber-300 shadow-md relative group-hover:scale-105 transition-transform">
+                        <!-- Gambar Ilustrasi Abdoel Moeis -->
+                        <svg viewBox="0 0 200 200" class="w-full h-full object-cover">
+                            <rect width="200" height="200" fill="#fef08a"/>
+                            <!-- Peci Hitam Nasional -->
+                            <path d="M60 70 C60 45 75 35 100 35 C125 35 140 45 140 70 Z" fill="#18181b"/>
+                            <rect x="60" y="65" width="80" height="10" fill="#27272a"/>
+                            <!-- Wajah Sastrawan & Wartawan -->
+                            <circle cx="100" cy="95" r="33" fill="#fde68a"/>
+                            <circle cx="86" cy="90" r="3.5" fill="#18181b"/>
+                            <circle cx="114" cy="90" r="3.5" fill="#18181b"/>
+                            <path d="M86 98 Q100 108 114 98 Z" fill="#27272a"/> <!-- Kumis khas -->
+                            <!-- Setelan Jas Wartawan / Sastrawan -->
+                            <path d="M35 200 L165 200 L150 140 Q100 155 50 140 Z" fill="#713f12"/>
+                            <path d="M85 140 L100 175 L115 140 Z" fill="#ffffff"/>
+                            <polygon points="97,145 103,145 102,185 98,185" fill="#854d0e"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm sm:text-base text-slate-800 line-clamp-1">Abdoel Moeis</h3>
+                        <span class="inline-block px-2 py-0.5 bg-amber-100 text-amber-900 text-[10px] sm:text-xs rounded-md font-medium mt-1">Sumatra Barat</span>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- BAGIAN B: IDENTITAS PAHLAWAN -->
+        <div class="paper-texture rounded-3xl p-5 sm:p-8 border-2 border-amber-900/10">
+            <div class="flex items-center gap-3 mb-4">
+                <span class="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-amber-800 text-white flex items-center justify-center font-header font-bold text-xl shadow-md">B</span>
+                <div>
+                    <h2 class="font-header text-xl sm:text-2xl text-amber-950">Identitas Pahlawan</h2>
+                    <p class="text-xs sm:text-sm text-slate-600">Setelah memilih pahlawan, tuliskan informasi dasar tentang pahlawan tersebut.</p>
+                </div>
+            </div>
+
+            <div class="space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 bg-amber-50/50 p-3 rounded-2xl border border-amber-100">
+                    <span class="w-8 h-8 rounded-full bg-amber-700 text-white font-bold flex items-center justify-center text-sm shrink-0">1</span>
+                    <label class="font-semibold text-slate-800 sm:w-1/3 text-sm sm:text-base">Nama Pahlawan:</label>
+                    <input type="text" id="b_nama" placeholder="Otomatis terisi atau ketik disini..." class="w-full bg-white border border-amber-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                </div>
+
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 bg-amber-50/50 p-3 rounded-2xl border border-amber-100">
+                    <span class="w-8 h-8 rounded-full bg-amber-700 text-white font-bold flex items-center justify-center text-sm shrink-0">2</span>
+                    <label class="font-semibold text-slate-800 sm:w-1/3 text-sm sm:text-base">Tempat Asal:</label>
+                    <input type="text" id="b_asal" placeholder="Otomatis terisi atau ketik asal pahlawan..." class="w-full bg-white border border-amber-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                </div>
+
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 bg-amber-50/50 p-3 rounded-2xl border border-amber-100">
+                    <span class="w-8 h-8 rounded-full bg-amber-700 text-white font-bold flex items-center justify-center text-sm shrink-0">3</span>
+                    <label class="font-semibold text-slate-800 sm:w-1/3 text-sm sm:text-base">Julukan (jika ada):</label>
+                    <input type="text" id="b_julukan" placeholder="Tuliskan julukan pahlawan..." class="w-full bg-white border border-amber-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                </div>
+
+                <div class="flex flex-col sm:flex-row sm:items-start gap-2 bg-amber-50/50 p-3 rounded-2xl border border-amber-100">
+                    <span class="w-8 h-8 rounded-full bg-amber-700 text-white font-bold flex items-center justify-center text-sm shrink-0 mt-1">4</span>
+                    <label class="font-semibold text-slate-800 sm:w-1/3 text-sm sm:text-base mt-2">Peran atau bidang perjuangan:</label>
+                    <textarea id="b_peran" rows="2" placeholder="Tuliskan bidang/peran perjuangan pahlawan..." class="w-full bg-white border border-amber-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- BAGIAN C: JEJAK PERJUANGAN -->
+        <div class="paper-texture rounded-3xl p-5 sm:p-8 border-2 border-amber-900/10">
+            <div class="flex items-center gap-3 mb-4">
+                <span class="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-amber-800 text-white flex items-center justify-center font-header font-bold text-xl shadow-md">C</span>
+                <div>
+                    <h2 class="font-header text-xl sm:text-2xl text-amber-950">Jejak Perjuangan</h2>
+                    <p class="text-xs sm:text-sm text-slate-600">Tuliskan jawabanmu berdasarkan pahlawan yang telah kamu pilih.</p>
+                </div>
+            </div>
+
+            <div class="space-y-5">
+                <div class="bg-amber-50/50 p-4 rounded-2xl border border-amber-100 space-y-2">
+                    <div class="flex items-center gap-2">
+                        <span class="w-7 h-7 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-xs">5</span>
+                        <p class="font-semibold text-slate-800 text-sm sm:text-base">Ceritakan secara singkat latar belakang perjuangan pahlawan tersebut. Mengapa beliau berjuang?</p>
+                    </div>
+                    <textarea id="c_5" rows="3" placeholder="Tuliskan latar belakang dan alasan berjuang..." class="w-full bg-white border border-amber-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"></textarea>
+                </div>
+
+                <div class="bg-amber-50/50 p-4 rounded-2xl border border-amber-100 space-y-2">
+                    <div class="flex items-center gap-2">
+                        <span class="w-7 h-7 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-xs">6</span>
+                        <p class="font-semibold text-slate-800 text-sm sm:text-base">Apa saja perjuangan atau tindakan penting yang dilakukan oleh pahlawan tersebut?</p>
+                    </div>
+                    <textarea id="c_6" rows="3" placeholder="Tuliskan tindakan-tindakan pentingnya..." class="w-full bg-white border border-amber-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"></textarea>
+                </div>
+
+                <div class="bg-amber-50/50 p-4 rounded-2xl border border-amber-100 space-y-2">
+                    <div class="flex items-center gap-2">
+                        <span class="w-7 h-7 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-xs">7</span>
+                        <p class="font-semibold text-slate-800 text-sm sm:text-base">Apa jasa atau hasil perjuangan pahlawan tersebut bagi masyarakat atau bangsa Indonesia?</p>
+                    </div>
+                    <textarea id="c_7" rows="3" placeholder="Tuliskan jasa atau hasil perjuangannya..." class="w-full bg-white border border-amber-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- BAGIAN D: NILAI KEPAHLAWANAN -->
+        <div class="paper-texture rounded-3xl p-5 sm:p-8 border-2 border-amber-900/10">
+            <div class="flex items-center gap-3 mb-4">
+                <span class="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-amber-800 text-white flex items-center justify-center font-header font-bold text-xl shadow-md">D</span>
+                <div>
+                    <h2 class="font-header text-xl sm:text-2xl text-amber-950">Nilai Kepahlawanan</h2>
+                    <p class="text-xs sm:text-sm text-slate-600">Tuliskan jawabanmu pada kolom yang tersedia.</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Soal 8 -->
+                <div class="bg-amber-50/50 p-4 rounded-2xl border border-amber-100 flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-start gap-2 mb-3">
+                            <span class="w-7 h-7 rounded-full bg-orange-700 text-white font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">8</span>
+                            <p class="font-semibold text-slate-800 text-sm sm:text-base">Tuliskan dua sikap yang dapat kamu teladani dari pahlawan tersebut:</p>
+                        </div>
+                        <div class="space-y-2 pl-2">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-bold text-amber-800">1.</span>
+                                <input type="text" id="d_8_1" placeholder="Sikap teladan pertama..." class="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-bold text-amber-800">2.</span>
+                                <input type="text" id="d_8_2" placeholder="Sikap teladan kedua..." class="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Soal 9 -->
+                <div class="bg-amber-50/50 p-4 rounded-2xl border border-amber-100 flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-start gap-2 mb-3">
+                            <span class="w-7 h-7 rounded-full bg-orange-700 text-white font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">9</span>
+                            <p class="font-semibold text-slate-800 text-sm sm:text-base">Bagaimana kamu dapat menerapkan salah satu sikap tersebut dalam kehidupan sehari-hari di rumah atau di sekolah?</p>
+                        </div>
+                        <textarea id="d_9" rows="3" placeholder="Penerapan dalam kehidupan sehari-hari..." class="w-full bg-white border border-amber-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- BAGIAN E & F: SUMBER INFORMASI & REFLEKSI -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- BAGIAN E -->
+            <div class="paper-texture rounded-3xl p-5 sm:p-8 border-2 border-amber-900/10 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center gap-3 mb-3">
+                        <span class="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-amber-800 text-white flex items-center justify-center font-header font-bold text-xl shadow-md">E</span>
+                        <div>
+                            <h2 class="font-header text-xl sm:text-2xl text-amber-950">Sumber Informasi</h2>
+                        </div>
+                    </div>
+                    <p class="text-xs text-slate-600 mb-3">Tuliskan sumber informasi yang kamu gunakan untuk mencari data (Contoh: buku IPAS, buku lain, artikel website, dsb).</p>
+                    <textarea id="e_sumber" rows="3" placeholder="Contoh: Buku IPAS Kelas 6 Bab 3, Wikipedia, Buku Sejarah..." class="w-full bg-white border border-amber-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"></textarea>
+                </div>
+            </div>
+
+            <!-- BAGIAN F -->
+            <div class="paper-texture rounded-3xl p-5 sm:p-8 border-2 border-amber-900/10 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center gap-3 mb-3">
+                        <span class="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-amber-800 text-white flex items-center justify-center font-header font-bold text-xl shadow-md">F</span>
+                        <div>
+                            <h2 class="font-header text-xl sm:text-2xl text-amber-950">Refleksi</h2>
+                        </div>
+                    </div>
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="w-6 h-6 rounded-full bg-purple-700 text-white font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">11</span>
+                        <p class="font-semibold text-slate-800 text-sm">Menurutmu, mengapa kita perlu mengenal dan meneladani para pahlawan?</p>
+                    </div>
+                    <textarea id="f_refleksi" rows="3" placeholder="Tuliskan pendapatmu di sini..." class="w-full bg-white border border-amber-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"></textarea>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Action Buttons Bar for Student -->
+        <div class="paper-texture rounded-3xl p-5 sm:p-6 border-2 border-amber-900/10 flex flex-col sm:flex-row flex-wrap gap-4 items-center justify-center">
+            
+            <!-- Submit to Cloud Direct Button -->
+            <button id="btnKirimGuru" onclick="kirimKeGuru()" class="w-full sm:w-auto px-10 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-base sm:text-lg rounded-2xl shadow-xl hover:shadow-emerald-600/30 transition-all flex items-center justify-center gap-3 transform hover:-translate-y-0.5">
+                <i class="fa-solid fa-paper-plane text-xl"></i> Kirim LKPD ke Guru
+            </button>
+
+            <!-- Reset Button -->
+            <button onclick="resetForm()" class="w-full sm:w-auto px-6 py-4 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-2xl transition-all flex items-center justify-center gap-2">
+                <i class="fa-solid fa-rotate-left"></i> Reset Form
+            </button>
+        </div>
+
+        <!-- Notification Toast -->
+        <div id="toast" class="fixed bottom-5 right-5 bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-2xl opacity-0 pointer-events-none transition-all duration-300 flex items-center gap-3 z-50">
+            <i id="toastIcon" class="fa-solid fa-circle-check text-emerald-400 text-lg"></i>
+            <span id="toastMsg" class="text-sm font-medium">Pesan berhasil dikirim!</span>
+        </div>
+
+        <footer class="text-center text-xs text-amber-900/60 pb-8">
+            © LKPD Digital IPAS Kelas VI • Kurikulum Merdeka • Sistem Evaluasi Penilaian Otomatis
+        </footer>
+
+    </div>
+
+    <!-- MODAL POPUP: Teacher Login -->
+    <div id="modalTeacherLogin" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border-2 border-amber-200 relative">
+            <button onclick="closeTeacherLogin()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            
+            <div class="text-center space-y-2 mb-6">
+                <div class="w-14 h-14 bg-amber-100 text-amber-900 rounded-2xl flex items-center justify-center mx-auto text-2xl font-bold">
+                    <i class="fa-solid fa-user-lock"></i>
+                </div>
+                <h3 class="font-header text-2xl font-bold text-amber-950">Masuk Dashboard Guru</h3>
+                <p class="text-xs text-slate-500">Masukkan kata sandi guru untuk melihat hasil kiriman jawaban & penilaian siswa.</p>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Kata Sandi Guru:</label>
+                    <input type="password" id="inputPassGuru" placeholder="Masukkan password..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                </div>
+
+                <div id="loginErrorMsg" class="text-xs text-red-600 hidden font-semibold text-center bg-red-50 p-2 rounded-lg border border-red-200">
+                    Kata sandi salah! Silakan coba lagi.
+                </div>
+
+                <button onclick="verifyTeacherLogin()" class="w-full py-3 bg-amber-800 hover:bg-amber-900 text-white font-bold rounded-xl shadow-md transition-all">
+                    Masuk ke Dashboard
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL POPUP: Teacher Dashboard Overlay -->
+    <div id="modalTeacherDashboard" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 hidden flex flex-col p-2 sm:p-6 overflow-hidden">
+        <div class="bg-white rounded-3xl h-full flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+            
+            <!-- Dashboard Header -->
+            <div class="bg-amber-950 text-amber-50 p-4 sm:p-6 flex flex-wrap items-center justify-between gap-4 border-b border-amber-900">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-amber-800 flex items-center justify-center font-bold text-lg">
+                        <i class="fa-solid fa-clipboard-check"></i>
+                    </div>
+                    <div>
+                        <h2 class="font-header text-xl sm:text-2xl">Dashboard Hasil LKPD Siswa</h2>
+                        <p class="text-xs text-amber-200/80">Sistem Evaluasi Otomatis & Penilaian Teliti Guru</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-3">
+                    <span id="submissionCountBadge" class="bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-full">
+                        0 Jawaban Diterima
+                    </span>
+                    <button onclick="closeTeacherDashboard()" class="bg-amber-800 hover:bg-amber-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2">
+                        <i class="fa-solid fa-arrow-left"></i> Kembali
+                    </button>
+                </div>
+            </div>
+
+            <!-- Dashboard Content & Filter -->
+            <div class="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div class="relative w-full sm:w-64">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-slate-400 text-sm"></i>
+                    <input type="text" id="searchStudent" oninput="filterSubmissions()" placeholder="Cari nama siswa atau kelas..." class="w-full bg-white border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                </div>
+                <p class="text-xs text-slate-500 italic">Setiap LKPD secara otomatis dinilai berdasarkan kelengkapan & akurasi materi pahlawan yang dipilih.</p>
+            </div>
+
+            <!-- Table or Submission Cards List -->
+            <div class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4" id="submissionsContainer">
+                <div class="text-center py-12 text-slate-400">
+                    <i class="fa-solid fa-spinner fa-spin text-3xl mb-2"></i>
+                    <p class="text-sm">Memuat data jawaban siswa...</p>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- MODAL POPUP: Student Detail View for Teacher -->
+    <div id="modalDetailSubmission" class="fixed inset-0 bg-black/70 z-50 hidden flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+        <div class="bg-white rounded-3xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+            <div class="bg-amber-900 text-white p-4 sm:p-5 flex justify-between items-center">
+                <div>
+                    <h3 class="font-header text-xl font-bold" id="detailModalTitle">Detail LKPD Siswa</h3>
+                    <p class="text-xs text-amber-200" id="detailModalSub"></p>
+                </div>
+                <button onclick="closeDetailSubmission()" class="text-white hover:text-amber-200 text-xl font-bold">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="p-5 overflow-y-auto space-y-4 text-slate-800 text-sm" id="detailModalBody">
+                <!-- Content inserted dynamically -->
+            </div>
+            <div class="p-4 bg-slate-100 border-t border-slate-200 flex justify-end items-center gap-2">
+                <button onclick="downloadGradedLKPD()" id="btnDownloadPDF" class="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold rounded-xl flex items-center gap-2 shadow-lg transition-all">
+                    <i class="fa-solid fa-file-pdf"></i> Unduh LKPD & Nilai (PDF Printable)
+                </button>
+                <button onclick="saveTeacherGrading()" id="btnSimpanNilaiGuru" class="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold rounded-xl flex items-center gap-2 shadow-lg">
+                    <i class="fa-solid fa-floppy-disk"></i> Simpan Penilaian & Evaluasi Guru
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- HIDDEN TEMPLATE FOR PRINTABLE GRADED PDF -->
+    <div id="pdfContainer" class="hidden"></div>
+
+    <script>
+        let selectedHeroName = '';
+        let selectedHeroOrigin = '';
+        let allSubmissionsData = [];
+        let currentDetailSubmission = null;
+
+        // HERO KNOWLEDGE DATABASE FOR DETAILED AUTO-EVALUATION
+        const HERO_DATABASE = {
+            "pangeran antasari": {
+                keywords_asal: ["kalimantan", "banjar", "kalsel"],
+                julukan_expected: ["panembahan amiruddin khalifatul mukminin", "pahlawan banjar"],
+                peran_expected: ["perang banjar", "memimpin perlawanan", "melawan belanda"],
+                latar_belakang: ["monopoli", "tambang batu bara", "campur tangan", "sultan banjar"],
+                tindakan: ["benteng", "serangan", "perang banjar", "gerilya"],
+                jasa: ["kemerdekaan", "semangat pantang menyerah", "martabat banjar"]
+            },
+            "ki hadjar dewantara": {
+                keywords_asal: ["yogyakarta", "jogja", "pakualaman"],
+                julukan_expected: ["bapak pendidikan nasional", "soewardi soerjaningrat"],
+                peran_expected: ["pendidikan", "taman siswa", "pengajaran", "jurnalis", "menteri"],
+                latar_belakang: ["diskriminasi pendidikan", "rakyat tidak bisa sekolah", "penjajahan belanda"],
+                tindakan: ["mendirikan taman siswa", "menulis tulisan kritis", "als ik eens nederlander was"],
+                jasa: ["pendidikan bagi seluruh rakyat", "tut wuri handayani", "hari pendidikan nasional"]
+            },
+            "i gusti ngurah rai": {
+                keywords_asal: ["bali", "badung", "carangsari"],
+                julukan_expected: ["ciung wanara", "pahlawan bali"],
+                peran_expected: ["militer", "pasukan ciung wanara", "puputan margarana", "tentara"],
+                latar_belakang: ["belanda ingin menguasai bali", "nica", "penolakan perundingan"],
+                tindakan: ["perang puputan margarana", "bertahan hingga titik darah penghabisan"],
+                jasa: ["keutuhan nkri", "menjaga bali dari belanda", "semangat juang"]
+            },
+            "muhammad zainuddin abdul madjid": {
+                keywords_asal: ["nusa tenggara barat", "ntb", "lombok", "pancasor"],
+                julukan_expected: ["tuan guru bajang", "tgkh", "hamzanwadi"],
+                peran_expected: ["ulama", "pendidikan islam", "nw", "nahdlatul wathan"],
+                latar_belakang: ["keterbelakangan pendidikan", "dakwah islam", "penjajahan"],
+                tindakan: ["mendirikan nahdlatul wathan", "membangun madrasah", "pemberdayaan masyarakat"],
+                jasa: ["kemajuan pendidikan di ntb", "mencerdaskan umat", "penyebaran kebaikan"]
+            },
+            "sam ratulangi": {
+                keywords_asal: ["sulawesi utara", "manado", "tondano"],
+                julukan_expected: ["gerungan saul samuel jacobus ratulangi", "gubernur sulawesi pertama"],
+                peran_expected: ["gubernur sulawesi", "politikus", "ilmuwan", "doktor matematika"],
+                latar_belakang: ["ketidakadilan sosial", "penjajahan", "keinginan memajukan sulawesi"],
+                tindakan: ["si tou timou tumou tou", "pembentukan ppki", "perjuangan diplomasi"],
+                jasa: ["pembangunan sulawesi", "falsafah kemanusiaan", "persatuan indonesia"]
+            },
+            "abdoel moeis": {
+                keywords_asal: ["sumatra barat", "sumbar", "solok", "minangkabau"],
+                julukan_expected: ["sastrawan pahlawan nasional pertama", "wartawan"],
+                peran_expected: ["sastrawan", "wartawan", "sarekat islam", "anggota volksraad"],
+                latar_belakang: ["penindasan buruh/petani", "pemberitaan tidak adil", "penjajahan belanda"],
+                tindakan: ["menulis novel salah asuhan", "memimpin mogok kerja buruh", "kritik pers"],
+                jasa: ["sastra indonesia", "kesadaran nasionalis", "perjuangan pers"]
+            }
+        };
+
+        // EVALUATE STUDENT ANSWERS AUTOMATICALLY WITH THOROUGH ANALYSIS
+        function evaluateStudentSubmission(data) {
+            let score_a_b = 0;
+            let score_c = 0;
+            let score_d = 0;
+            let score_e_f = 0;
+
+            const feedback = [];
+            const heroKey = (data.b_nama || '').toLowerCase();
+            let matchedDb = null;
+
+            for (const key in HERO_DATABASE) {
+                if (heroKey.includes(key) || key.includes(heroKey)) {
+                    matchedDb = HERO_DATABASE[key];
+                    break;
+                }
+            }
+
+            // --- SECTION A & B EVALUATION (Identitas - Max 20 Points) ---
+            if (data.b_nama && data.b_nama.length > 2) score_a_b += 5;
+            if (data.b_asal && data.b_asal.length > 2) {
+                score_a_b += 5;
+                if (matchedDb && matchedDb.keywords_asal.some(kw => data.b_asal.toLowerCase().includes(kw))) {
+                    score_a_b += 2; // Bonus accuracy
+                }
+            }
+            if (data.b_julukan && data.b_julukan.length > 2) score_a_b += 4;
+            else feedback.push("Bagian B: Julukan pahlawan bisa dibuat lebih rinci.");
+
+            if (data.b_peran && data.b_peran.length > 8) score_a_b += 4;
+            score_a_b = Math.min(20, score_a_b);
+
+            // --- SECTION C EVALUATION (Jejak Perjuangan - Max 35 Points) ---
+            if (data.c_5) {
+                const len = data.c_5.trim().length;
+                if (len >= 30) score_c += 12;
+                else if (len >= 15) score_c += 8;
+                else if (len > 0) score_c += 4;
+            } else {
+                feedback.push("Bagian C (No. 5): Penjelasan latar belakang perjuangan belum diisi.");
+            }
+
+            if (data.c_6) {
+                const len = data.c_6.trim().length;
+                if (len >= 30) score_c += 12;
+                else if (len >= 15) score_c += 8;
+                else if (len > 0) score_c += 4;
+            } else {
+                feedback.push("Bagian C (No. 6): Tindakan penting pahlawan perlu dijelaskan.");
+            }
+
+            if (data.c_7) {
+                const len = data.c_7.trim().length;
+                if (len >= 25) score_c += 11;
+                else if (len >= 12) score_c += 7;
+                else if (len > 0) score_c += 4;
+            } else {
+                feedback.push("Bagian C (No. 7): Jasa pahlawan belum dituliskan secara mendalam.");
+            }
+
+            // --- SECTION D EVALUATION (Nilai Kepahlawanan - Max 25 Points) ---
+            let subD8 = 0;
+            if (data.d_8_1 && data.d_8_1.length > 2) subD8 += 6;
+            if (data.d_8_2 && data.d_8_2.length > 2) subD8 += 6;
+            score_d += subD8;
+            if (subD8 < 12) feedback.push("Bagian D (No. 8): Tuliskan 2 sikap teladan secara lengkap.");
+
+            if (data.d_9) {
+                const len = data.d_9.trim().length;
+                if (len >= 25) score_d += 13;
+                else if (len >= 12) score_d += 8;
+                else if (len > 0) score_d += 4;
+            } else {
+                feedback.push("Bagian D (No. 9): Jelaskan contoh penerapan sikap dalam kehidupan sehari-hari.");
+            }
+
+            // --- SECTION E & F EVALUATION (Sumber & Refleksi - Max 20 Points) ---
+            if (data.e_sumber && data.e_sumber.length > 3) score_e_f += 8;
+            else feedback.push("Bagian E: Sebutkan sumber belajar yang digunakan (Buku/Internet).");
+
+            if (data.f_refleksi) {
+                const len = data.f_refleksi.trim().length;
+                if (len >= 25) score_e_f += 12;
+                else if (len >= 12) score_e_f += 7;
+                else if (len > 0) score_e_f += 4;
+            } else {
+                feedback.push("Bagian F: Tulislah pendapat refleksi mengapa kita harus meneladani pahlawan.");
+            }
+
+            const totalScore = score_a_b + score_c + score_d + score_e_f;
+            const autoNote = feedback.length === 0 
+                ? "Sangat baik! Seluruh informasi terisi dengan lengkap, tepat, dan mendalam." 
+                : "Catatan evaluasi: " + feedback.join(" ");
+
+            return {
+                scores: {
+                    a_b: score_a_b,
+                    c: score_c,
+                    d: score_d,
+                    e_f: score_e_f
+                },
+                totalScore: totalScore,
+                notes: autoNote
+            };
+        }
+
+        // Select Hero Function
+        function selectHero(nama, asal) {
+            selectedHeroName = nama;
+            selectedHeroOrigin = asal;
+
+            document.getElementById('b_nama').value = nama;
+            document.getElementById('b_asal').value = asal;
+
+            const cards = document.querySelectorAll('.hero-card');
+            cards.forEach((card) => {
+                const checkIcon = card.querySelector('.check-icon i');
+                if (card.innerText.includes(nama)) {
+                    card.classList.add('selected');
+                    checkIcon.classList.remove('hidden');
+                } else {
+                    card.classList.remove('selected');
+                    checkIcon.classList.add('hidden');
+                }
+            });
+
+            showToast(`Pahlawan dipilih: ${nama}`, 'success');
+        }
+
+        // Show Toast Notification
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toastMsg');
+            const toastIcon = document.getElementById('toastIcon');
+
+            toastMsg.innerText = message;
+            
+            if (type === 'success') {
+                toastIcon.className = "fa-solid fa-circle-check text-emerald-400 text-lg";
+            } else if (type === 'error') {
+                toastIcon.className = "fa-solid fa-circle-xmark text-red-400 text-lg";
+            } else {
+                toastIcon.className = "fa-solid fa-circle-info text-amber-400 text-lg";
+            }
+
+            toast.classList.remove('opacity-0', 'pointer-events-none');
+            
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'pointer-events-none');
+            }, 3500);
+        }
+
+        // Gather all form inputs into an object
+        function getFormData() {
+            return {
+                nama: document.getElementById('inputNama').value.trim(),
+                kelas: document.getElementById('inputKelas').value.trim(),
+                tanggal: document.getElementById('inputTanggal').value,
+                
+                b_nama: document.getElementById('b_nama').value.trim(),
+                b_asal: document.getElementById('b_asal').value.trim(),
+                b_julukan: document.getElementById('b_julukan').value.trim(),
+                b_peran: document.getElementById('b_peran').value.trim(),
+
+                c_5: document.getElementById('c_5').value.trim(),
+                c_6: document.getElementById('c_6').value.trim(),
+                c_7: document.getElementById('c_7').value.trim(),
+
+                d_8_1: document.getElementById('d_8_1').value.trim(),
+                d_8_2: document.getElementById('d_8_2').value.trim(),
+                d_9: document.getElementById('d_9').value.trim(),
+
+                e_sumber: document.getElementById('e_sumber').value.trim(),
+                f_refleksi: document.getElementById('f_refleksi').value.trim()
+            };
+        }
+
+        // Submit directly to Cloud Database for Teacher Access
+        async function kirimKeGuru() {
+            const data = getFormData();
+
+            if (!data.nama || !data.kelas) {
+                showToast('Harap isi Nama Siswa dan Kelas terlebih dahulu!', 'error');
+                document.getElementById('inputNama').focus();
+                return;
+            }
+
+            if (!data.b_nama) {
+                showToast('Harap pilih pahlawan terlebih dahulu!', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('btnKirimGuru');
+            const originalContent = btn.innerHTML;
+            
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin text-xl"></i> Mengirimkan...`;
+
+            try {
+                // Perform automated thorough analysis
+                const evalResult = evaluateStudentSubmission(data);
+                
+                const submissionPayload = {
+                    ...data,
+                    teacherScores: evalResult.scores,
+                    totalScore: evalResult.totalScore,
+                    teacherNotes: evalResult.notes
+                };
+
+                if (window.saveSubmissionToCloud) {
+                    await window.saveSubmissionToCloud(submissionPayload);
+                    showToast(`Jawaban LKPD berhasil dikirimkan ke guru!`, 'success');
+
+                    setTimeout(() => {
+                        alert(`Terima kasih, ${data.nama}!\n\nLKPD Anda telah berhasil dikirimkan ke Dashboard Guru.`);
+                    }, 300);
+                } else {
+                    throw new Error("Sistem cloud belum siap.");
+                }
+            } catch (error) {
+                console.error("Gagal mengirim LKPD:", error);
+                showToast('Gagal mengirimkan. Periksa koneksi internet Anda.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+            }
+        }
+
+        // Reset Form
+        function resetForm() {
+            if (confirm('Apakah Anda yakin ingin mengosongkan semua isian form LKPD ini?')) {
+                document.querySelectorAll('input, textarea').forEach(input => input.value = '');
+                const cards = document.querySelectorAll('.hero-card');
+                cards.forEach(card => {
+                    card.classList.remove('selected');
+                    card.querySelector('.check-icon i').classList.add('hidden');
+                });
+                
+                const today = new Date().toISOString().split('T')[0];
+                document.getElementById('inputTanggal').value = today;
+
+                showToast('Formulir telah dikosongkan.', 'info');
+            }
+        }
+
+        // TEACHER PORTAL LOGIC
+        function openTeacherLogin() {
+            document.getElementById('modalTeacherLogin').classList.remove('hidden');
+            document.getElementById('inputPassGuru').value = '';
+            document.getElementById('loginErrorMsg').classList.add('hidden');
+            document.getElementById('inputPassGuru').focus();
+        }
+
+        function closeTeacherLogin() {
+            document.getElementById('modalTeacherLogin').classList.add('hidden');
+        }
+
+        function verifyTeacherLogin() {
+            const pass = document.getElementById('inputPassGuru').value;
+            if (pass === 'guru123') { // Simple default password for teacher portal
+                closeTeacherLogin();
+                openTeacherDashboard();
+            } else {
+                document.getElementById('loginErrorMsg').classList.remove('hidden');
+            }
+        }
+
+        function openTeacherDashboard() {
+            document.getElementById('modalTeacherDashboard').classList.remove('hidden');
+        }
+
+        function closeTeacherDashboard() {
+            document.getElementById('modalTeacherDashboard').classList.add('hidden');
+        }
+
+        // Render Teacher Dashboard Submissions List
+        window.renderTeacherDashboard = function(submissions) {
+            allSubmissionsData = submissions;
+            const container = document.getElementById('submissionsContainer');
+            const badge = document.getElementById('submissionCountBadge');
+            
+            badge.innerText = `${submissions.length} LKPD Diterima`;
+
+            if (submissions.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-16 bg-white rounded-2xl border-2 border-dashed border-slate-200">
+                        <i class="fa-solid fa-inbox text-4xl text-slate-300 mb-3"></i>
+                        <h4 class="font-bold text-slate-700">Belum Ada Kiriman Jawaban</h4>
+                        <p class="text-xs text-slate-500 mt-1">Jawaban siswa yang telah dikirim akan muncul otomatis di sini secara real-time.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            filterSubmissions();
+        };
+
+        // Filter submissions search
+        function filterSubmissions() {
+            const query = document.getElementById('searchStudent').value.toLowerCase();
+            const container = document.getElementById('submissionsContainer');
+            
+            const filtered = allSubmissionsData.filter(sub => 
+                (sub.nama && sub.nama.toLowerCase().includes(query)) ||
+                (sub.kelas && sub.kelas.toLowerCase().includes(query)) ||
+                (sub.b_nama && sub.b_nama.toLowerCase().includes(query))
+            );
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-12 bg-white rounded-2xl border border-slate-200 text-slate-500 text-sm">
+                        Tidak ditemukan siswa dengan kata kunci "${query}".
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = filtered.map((sub, index) => {
+                let dateStr = 'Baru saja';
+                if (sub.submittedAt && sub.submittedAt.seconds) {
+                    const d = new Date(sub.submittedAt.seconds * 1000);
+                    dateStr = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                }
+
+                const isGraded = sub.totalScore !== undefined;
+                const statusBadge = isGraded 
+                    ? `<span class="bg-emerald-100 text-emerald-800 border-emerald-300 border px-2.5 py-0.5 rounded-full text-xs font-bold"><i class="fa-solid fa-check-circle mr-1"></i>Nilai: ${sub.totalScore}/100</span>` 
+                    : `<span class="bg-amber-100 text-amber-800 border-amber-300 border px-2.5 py-0.5 rounded-full text-xs font-bold"><i class="fa-solid fa-clock mr-1"></i>Belum Dinilai</span>`;
+
+                return `
+                    <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 hover:border-amber-400 shadow-sm transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div class="space-y-1">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="bg-amber-100 text-amber-900 font-bold px-2.5 py-0.5 rounded-md text-xs">
+                                    ${sub.kelas || 'Tanpa Kelas'}
+                                </span>
+                                <h4 class="font-bold text-base text-slate-900">${sub.nama || 'Tanpa Nama'}</h4>
+                                ${statusBadge}
+                            </div>
+                            <p class="text-xs text-slate-600">
+                                Pahlawan Diselidiki: <strong class="text-amber-800">${sub.b_nama || '-'}</strong> (${sub.b_asal || '-'})
+                            </p>
+                            <p class="text-[11px] text-slate-400">
+                                <i class="fa-regular fa-clock mr-1"></i> Dikirim: ${dateStr}
+                            </p>
+                        </div>
+                        <button onclick="viewDetailSubmission(${index})" class="w-full sm:w-auto px-4 py-2 bg-amber-800 hover:bg-amber-900 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 shrink-0">
+                            <i class="fa-solid fa-clipboard-check"></i> Periksa & Penilaian Teliti
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // View Detail Submission with Manual/Adjustable Point Scoring for Teacher
+        function viewDetailSubmission(index) {
+            const sub = allSubmissionsData[index];
+            if (!sub) return;
+
+            currentDetailSubmission = sub;
+            const scores = sub.teacherScores || { a_b: 20, c: 35, d: 25, e_f: 20 };
+
+            document.getElementById('detailModalTitle').innerText = `Periksa LKPD: ${sub.nama || 'Siswa'}`;
+            document.getElementById('detailModalSub').innerText = `Kelas: ${sub.kelas || '-'} • Tanggal Dikirim: ${sub.tanggal || '-'}`;
+
+            document.getElementById('detailModalBody').innerHTML = `
+                <!-- Form Penilaian Guru Per Poin & Auto-Evaluasi -->
+                <div class="bg-amber-100/70 p-4 rounded-2xl border-2 border-amber-300 space-y-3">
+                    <div class="flex items-center justify-between border-b border-amber-300 pb-2">
+                        <h4 class="font-bold text-amber-950 text-base flex items-center gap-2">
+                            <i class="fa-solid fa-pen-to-square"></i> Skor & Evaluasi Otomatis (Dapat Disesuaikan)
+                        </h4>
+                        <span class="text-xs font-bold text-amber-900 bg-white px-3 py-1 rounded-full border border-amber-300">Total Skor Maksimal: 100</span>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                        <div class="bg-white p-3 rounded-xl border border-amber-200">
+                            <label class="block font-bold text-slate-800 mb-1">A & B. Identitas (Maks 20):</label>
+                            <input type="number" id="score_a_b" min="0" max="20" value="${scores.a_b !== undefined ? scores.a_b : 20}" oninput="calculateTotalScore()" class="w-full border border-amber-300 rounded-lg p-2 font-bold text-slate-900 focus:ring-2 focus:ring-amber-500">
+                        </div>
+                        <div class="bg-white p-3 rounded-xl border border-amber-200">
+                            <label class="block font-bold text-slate-800 mb-1">C. Jejak Perjuangan (Maks 35):</label>
+                            <input type="number" id="score_c" min="0" max="35" value="${scores.c !== undefined ? scores.c : 35}" oninput="calculateTotalScore()" class="w-full border border-amber-300 rounded-lg p-2 font-bold text-slate-900 focus:ring-2 focus:ring-amber-500">
+                        </div>
+                        <div class="bg-white p-3 rounded-xl border border-amber-200">
+                            <label class="block font-bold text-slate-800 mb-1">D. Nilai Pahlawan (Maks 25):</label>
+                            <input type="number" id="score_d" min="0" max="25" value="${scores.d !== undefined ? scores.d : 25}" oninput="calculateTotalScore()" class="w-full border border-amber-300 rounded-lg p-2 font-bold text-slate-900 focus:ring-2 focus:ring-amber-500">
+                        </div>
+                        <div class="bg-white p-3 rounded-xl border border-amber-200">
+                            <label class="block font-bold text-slate-800 mb-1">E & F. Sumber/Refleksi (Maks 20):</label>
+                            <input type="number" id="score_e_f" min="0" max="20" value="${scores.e_f !== undefined ? scores.e_f : 20}" oninput="calculateTotalScore()" class="w-full border border-amber-300 rounded-lg p-2 font-bold text-slate-900 focus:ring-2 focus:ring-amber-500">
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3 rounded-xl border border-amber-200">
+                        <div class="flex-1 w-full">
+                            <label class="block font-bold text-xs text-slate-800 mb-1">Catatan Evaluasi / Pesan Guru:</label>
+                            <input type="text" id="teacherNotes" placeholder="Tuliskan apresiasi atau perbaikan untuk siswa..." value="${sub.teacherNotes || ''}" class="w-full border border-amber-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-amber-500">
+                        </div>
+                        <div class="text-center bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-300 shrink-0">
+                            <span class="block text-[10px] font-bold text-emerald-800 uppercase">Total Nilai</span>
+                            <span id="displayTotalScore" class="text-2xl font-black text-emerald-700 font-header">${sub.totalScore !== undefined ? sub.totalScore : 100}</span>
+                            <span class="text-xs font-bold text-emerald-800">/ 100</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Identity Jawaban -->
+                <div class="bg-amber-50/70 p-4 rounded-2xl border border-amber-200 space-y-1">
+                    <h4 class="font-bold text-amber-950 text-sm border-b border-amber-200 pb-1 mb-2">A & B. Identitas Pahlawan</h4>
+                    <p><strong>Nama Pahlawan:</strong> ${sub.b_nama || '-'}</p>
+                    <p><strong>Tempat Asal:</strong> ${sub.b_asal || '-'}</p>
+                    <p><strong>Julukan:</strong> ${sub.b_julukan || '-'}</p>
+                    <p><strong>Peran / Bidang Perjuangan:</strong> ${sub.b_peran || '-'}</p>
+                </div>
+
+                <!-- Section C Jawaban -->
+                <div class="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
+                    <h4 class="font-bold text-slate-900 text-sm border-b border-slate-200 pb-1 mb-2">C. Jejak Perjuangan</h4>
+                    <p><strong>5. Latar Belakang & Alasan Berjuang:</strong><br><span class="text-slate-700">${sub.c_5 || '-'}</span></p>
+                    <p><strong>6. Tindakan / Perjuangan Penting:</strong><br><span class="text-slate-700">${sub.c_6 || '-'}</span></p>
+                    <p><strong>7. Jasa bagi Bangsa / Masyarakat:</strong><br><span class="text-slate-700">${sub.c_7 || '-'}</span></p>
+                </div>
+
+                <!-- Section D Jawaban -->
+                <div class="bg-amber-50/70 p-4 rounded-2xl border border-amber-200 space-y-2">
+                    <h4 class="font-bold text-amber-950 text-sm border-b border-amber-200 pb-1 mb-2">D. Nilai Kepahlawanan</h4>
+                    <p><strong>8. Sikap Teladan:</strong> 1) ${sub.d_8_1 || '-'} | 2) ${sub.d_8_2 || '-'}</p>
+                    <p><strong>9. Penerapan Sehari-hari:</strong><br><span class="text-slate-700">${sub.d_9 || '-'}</span></p>
+                </div>
+
+                <!-- Section E & F Jawaban -->
+                <div class="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
+                    <h4 class="font-bold text-slate-900 text-sm border-b border-slate-200 pb-1 mb-2">E & F. Sumber Informasi & Refleksi</h4>
+                    <p><strong>Sumber Informasi:</strong> ${sub.e_sumber || '-'}</p>
+                    <p><strong>Refleksi (Mengapa Perlu Meneladani):</strong><br><span class="text-slate-700">${sub.f_refleksi || '-'}</span></p>
+                </div>
+            `;
+
+            document.getElementById('modalDetailSubmission').classList.remove('hidden');
+            calculateTotalScore();
+        }
+
+        // Kalkulasi Skor Total Penilaian Guru
+        function calculateTotalScore() {
+            const ab = parseInt(document.getElementById('score_a_b')?.value || 0);
+            const c = parseInt(document.getElementById('score_c')?.value || 0);
+            const d = parseInt(document.getElementById('score_d')?.value || 0);
+            const ef = parseInt(document.getElementById('score_e_f')?.value || 0);
+
+            const total = ab + c + d + ef;
+            const display = document.getElementById('displayTotalScore');
+            if (display) display.innerText = total;
+        }
+
+        // Simpan Nilai Guru ke Firestore
+        async function saveTeacherGrading() {
+            if (!currentDetailSubmission || !currentDetailSubmission.id) {
+                showToast('Gagal menyimpan nilai.', 'error');
+                return;
+            }
+
+            const ab = parseInt(document.getElementById('score_a_b')?.value || 0);
+            const c = parseInt(document.getElementById('score_c')?.value || 0);
+            const d = parseInt(document.getElementById('score_d')?.value || 0);
+            const ef = parseInt(document.getElementById('score_e_f')?.value || 0);
+            const total = ab + c + d + ef;
+            const notes = document.getElementById('teacherNotes')?.value || '';
+
+            const btn = document.getElementById('btnSimpanNilaiGuru');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...`;
+
+            try {
+                if (window.updateTeacherGradeInCloud) {
+                    await window.updateTeacherGradeInCloud(currentDetailSubmission.id, {
+                        scores: { a_b: ab, c: c, d: d, e_f: ef },
+                        totalScore: total,
+                        notes: notes
+                    });
+
+                    currentDetailSubmission.totalScore = total;
+                    currentDetailSubmission.teacherScores = { a_b: ab, c: c, d: d, e_f: ef };
+                    currentDetailSubmission.teacherNotes = notes;
+
+                    showToast(`Nilai berhasil disimpan: ${total}/100`, 'success');
+                }
+            } catch (err) {
+                console.error("Gagal menyimpan nilai:", err);
+                showToast('Gagal menyimpan nilai ke database.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+        function closeDetailSubmission() {
+            document.getElementById('modalDetailSubmission').classList.add('hidden');
+            currentDetailSubmission = null;
+        }
+
+        // Function to build and download printable PDF containing student's LKPD and Teacher Grading
+        function downloadGradedLKPD() {
+            if (!currentDetailSubmission) {
+                showToast('Pilih lembar kerja siswa terlebih dahulu.', 'error');
+                return;
+            }
+
+            const sub = currentDetailSubmission;
+            const ab = parseInt(document.getElementById('score_a_b')?.value || 0);
+            const c = parseInt(document.getElementById('score_c')?.value || 0);
+            const d = parseInt(document.getElementById('score_d')?.value || 0);
+            const ef = parseInt(document.getElementById('score_e_f')?.value || 0);
+            const total = ab + c + d + ef;
+            const notes = document.getElementById('teacherNotes')?.value || 'Sangat baik!';
+
+            const pdfContainer = document.getElementById('pdfContainer');
+            pdfContainer.innerHTML = `
+                <div id="pdfDocument" style="width: 760px; height: 1070px; padding: 24px; background: #ffffff; font-family: 'Plus Jakarta Sans', sans-serif; color: #1e293b; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;">
+                    <div>
+                        <!-- HEADER BANNER -->
+                        <div style="border: 2px solid #78350f; padding: 10px 14px; border-radius: 12px; background-color: #fef3c7; text-align: center; position: relative; margin-bottom: 12px;">
+                            <span style="position: absolute; top: 8px; left: 12px; font-size: 10px; font-weight: bold; background: #92400e; color: white; padding: 2px 8px; border-radius: 4px;">LKPD IPAS Kelas VI • Bab 3</span>
+                            <h1 style="font-size: 20px; font-weight: 800; color: #451a03; margin: 0;">MISI DETEKTIF PAHLAWAN</h1>
+                            <p style="font-size: 11px; font-weight: 600; color: #92400e; margin: 2px 0 0 0;">Para Pahlawan Daerahku dan Pahlawan Nasional</p>
+                        </div>
+
+                        <!-- IDENTITY & SCORE HEADER -->
+                        <div style="display: flex; justify-content: space-between; gap: 12px; margin-bottom: 12px;">
+                            <div style="flex: 2; background: #fafaf9; border: 1.5px solid #d6d3d1; padding: 8px 12px; border-radius: 10px; font-size: 11px; line-height: 1.5;">
+                                <div><strong>Nama Siswa:</strong> ${sub.nama || '-'}</div>
+                                <div><strong>Kelas:</strong> ${sub.kelas || '-'}</div>
+                                <div><strong>Tanggal Dikirim:</strong> ${sub.tanggal || '-'}</div>
+                            </div>
+                            <div style="flex: 1; background: #ecfdf5; border: 2.5px solid #10b981; padding: 6px 10px; border-radius: 10px; text-align: center; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                                <span style="font-size: 9px; font-weight: bold; color: #047857; text-transform: uppercase; letter-spacing: 0.5px;">NILAI AKHIR GURU</span>
+                                <div style="line-height: 1; margin-top: 2px;">
+                                    <span style="font-size: 26px; font-weight: 900; color: #065f46;">${total}</span>
+                                    <span style="font-size: 11px; color: #047857; font-weight: bold;">/ 100</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TEACHER FEEDBACK SUMMARY BOX -->
+                        <div style="background: #f0fdf4; border: 1.5px solid #a7f3d0; padding: 8px 12px; border-radius: 8px; font-size: 10.5px; margin-bottom: 12px;">
+                            <strong style="color: #065f46;">Catatan Evaluasi Guru:</strong> ${notes}
+                            <div style="margin-top: 4px; display: flex; gap: 16px; color: #047857; font-weight: 700; font-size: 9.5px;">
+                                <span>Nilai A & B: ${ab}/20</span>
+                                <span>Nilai C: ${c}/35</span>
+                                <span>Nilai D: ${d}/25</span>
+                                <span>Nilai E & F: ${ef}/20</span>
+                            </div>
+                        </div>
+
+                        <!-- BAGIAN A & B -->
+                        <div style="border: 1px solid #e7e5e4; padding: 8px 12px; border-radius: 8px; margin-bottom: 10px; background: #fff;">
+                            <h3 style="font-size: 12px; font-weight: bold; color: #78350f; border-bottom: 1.5px solid #f59e0b; padding-bottom: 3px; margin: 0 0 6px 0;">A & B. Identitas Pahlawan Diselidiki</h3>
+                            <div style="font-size: 10.5px; line-height: 1.5; display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+                                <p style="margin: 0;"><strong>Nama Pahlawan:</strong> ${sub.b_nama || '-'}</p>
+                                <p style="margin: 0;"><strong>Tempat Asal:</strong> ${sub.b_asal || '-'}</p>
+                                <p style="margin: 0;"><strong>Julukan:</strong> ${sub.b_julukan || '-'}</p>
+                                <p style="margin: 0;"><strong>Peran/Bidang Perjuangan:</strong> ${sub.b_peran || '-'}</p>
+                            </div>
+                        </div>
+
+                        <!-- BAGIAN C -->
+                        <div style="border: 1px solid #e7e5e4; padding: 8px 12px; border-radius: 8px; margin-bottom: 10px; background: #fff;">
+                            <h3 style="font-size: 12px; font-weight: bold; color: #78350f; border-bottom: 1.5px solid #f59e0b; padding-bottom: 3px; margin: 0 0 6px 0;">C. Jejak Perjuangan</h3>
+                            <div style="font-size: 10px; line-height: 1.45;">
+                                <p style="margin: 3px 0;"><strong>5. Latar Belakang & Alasan Berjuang:</strong> ${sub.c_5 || '-'}</p>
+                                <p style="margin: 3px 0;"><strong>6. Tindakan/Perjuangan Penting:</strong> ${sub.c_6 || '-'}</p>
+                                <p style="margin: 3px 0;"><strong>7. Jasa bagi Bangsa & Masyarakat:</strong> ${sub.c_7 || '-'}</p>
+                            </div>
+                        </div>
+
+                        <!-- BAGIAN D -->
+                        <div style="border: 1px solid #e7e5e4; padding: 8px 12px; border-radius: 8px; margin-bottom: 10px; background: #fff;">
+                            <h3 style="font-size: 12px; font-weight: bold; color: #78350f; border-bottom: 1.5px solid #f59e0b; padding-bottom: 3px; margin: 0 0 6px 0;">D. Nilai Kepahlawanan</h3>
+                            <div style="font-size: 10px; line-height: 1.45;">
+                                <p style="margin: 3px 0;"><strong>8. Sikap Teladan:</strong> 1) ${sub.d_8_1 || '-'} | 2) ${sub.d_8_2 || '-'}</p>
+                                <p style="margin: 3px 0;"><strong>9. Penerapan Sehari-hari:</strong> ${sub.d_9 || '-'}</p>
+                            </div>
+                        </div>
+
+                        <!-- BAGIAN E & F -->
+                        <div style="border: 1px solid #e7e5e4; padding: 8px 12px; border-radius: 8px; margin-bottom: 10px; background: #fff;">
+                            <h3 style="font-size: 12px; font-weight: bold; color: #78350f; border-bottom: 1.5px solid #f59e0b; padding-bottom: 3px; margin: 0 0 6px 0;">E & F. Sumber Informasi & Refleksi</h3>
+                            <div style="font-size: 10px; line-height: 1.45;">
+                                <p style="margin: 3px 0;"><strong>Sumber Informasi:</strong> ${sub.e_sumber || '-'}</p>
+                                <p style="margin: 3px 0;"><strong>Refleksi Meneladani Pahlawan:</strong> ${sub.f_refleksi || '-'}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const element = document.getElementById('pdfDocument');
+            const opt = {
+                margin:       [0.15, 0.15, 0.15, 0.15],
+                filename:     `LKPD_${sub.nama || 'Siswa'}_Nilai_${total}.pdf`,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, logging: false, useCORS: true },
+                jsPDF:        { unit: 'in', format: 'a4', orientation: 'portrait' }
+            };
+
+            const btn = document.getElementById('btnDownloadPDF');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Memproses PDF...`;
+
+            html2pdf().set(opt).from(element).save().then(() => {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                showToast('Berkas PDF LKPD (1 Lembar) berhasil diunduh!', 'success');
+            }).catch(err => {
+                console.error("Gagal cetak PDF:", err);
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                showToast('Gagal memproses PDF.', 'error');
+            });
+        }
+
+        // On Load Init
+<!-- ... existing code -->
